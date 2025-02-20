@@ -1,0 +1,12 @@
+# Ignore all
+*
+
+# Allow some
+!requirements.txt
+!setup.py
+!README.md
+!watch_calibration/
+
+
+# TODO remove
+!output.wav

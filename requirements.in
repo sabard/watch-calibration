@@ -1,0 +1,18 @@
+# watch-calibration
+-e file:.#egg=watch_calibration
+bokeh
+directory_tree
+ipywidgets
+ipympl
+jupyter
+librosa
+matplotlib
+numpy
+pillow
+sounddevice
+scikit-learn
+scipy
+
+# development
+graphviz
+pre-commit

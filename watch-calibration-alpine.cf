@@ -1,0 +1,16 @@
+FROM python:3.10.14-alpine
+
+RUN apk update
+RUN apk add gcc gfortran py-pip build-base wget freetype-dev libpng-dev openblas-dev portaudio
+
+RUN mkdir -p /usr/src/exp
+WORKDIR /usr/src/exp
+
+COPY . .
+
+RUN pip install --upgrade pip
+
+RUN pip install "matplotlib<3.9" "scipy<1.12"
+# RUN pip install -r requirements.txt
+
+# RUN python3 -c 'from watch_calibration import WatchCalibration; wc = WatchCalibration(); wc.generate_figures()'
