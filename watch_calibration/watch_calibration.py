@@ -20,6 +20,10 @@ try:
 except:
     SND_DEFINED = False
 
+FREQ_GUESS = 6.
+WINDOW_LEN = 2000
+PEAK_PROMINENCE = 0.003
+
 class WatchCalibration:
     """ WatchCalibration class  """
 
@@ -27,6 +31,9 @@ class WatchCalibration:
         """ Initialize Watch-Calibration. """
 
         self.fs = fs
+        self.freq_quess = FREQ_GUESS
+        self.window_len = WINDOW_LEN
+        self.peak_prominence = PEAK_PROMINENCE
 
     def __repr__(self):
         """ Return Watch-Calibration name. """
@@ -101,48 +108,34 @@ class WatchCalibration:
         shift_amt = np.argmax(corr) - len(corr) // 2
         return shift_amt
 
+    def find_peaks(self, audio):
+        # throw out first and last ticks
+        distance = int(self.fs/self.freq_quess*.9)
+        win_size = int(self.fs/self.freq_quess)
+        audio = audio[win_size:-win_size]
+        # filtered_audio, envelope = calculate_envelope(audio)
+
+        peaks = sps.find_peaks(
+            audio,
+            distance=distance,
+            prominence=self.peak_prominence,
+            wlen=distance
+        )[0]
+
+        # throw out first and last peaks
+        peaks = peaks[1:-1]
+        onset_times = peaks / self.fs
+
+        return peaks, onset_times
+
     def perform_analysis(self, audio=None):
         if audio is None:
             audio, _ = self.load_audio()
 
-        FREQ_GUESS = 6.
-        WINDOW_LEN = 2000
-        PEAK_PROMINENCE = 0.003
+        peaks, onset_times = self.find_peaks(audio)
 
-        # throw out first and last ticks
-        distance = int(self.fs/FREQ_GUESS*.9)
-        win_size = int(self.fs/FREQ_GUESS)
-        comp_audio = audio[win_size:-win_size]
-        # filtered_audio, envelope = calculate_envelope(comp_audio)
-
-        peaks = sps.find_peaks(comp_audio, distance=distance, prominence=PEAK_PROMINENCE, wlen=distance)[0]
-        # throw out first and last peaks
-        peaks = peaks[1:-1]
-
-        shifted_peaks = copy.copy(peaks)
-        for i in range(len(peaks)-1):
-            win1_start = peaks[i]-WINDOW_LEN//2
-            if win1_start < 0:
-                win1_start = 0
-            win1_end = peaks[i]+WINDOW_LEN//2 + 1
-            if win1_end > len(comp_audio):
-                win1_end = len(comp_audio)
-            win1 = comp_audio[win1_start:win1_end]
-
-            win2_start = peaks[i+1]-WINDOW_LEN//2
-            if win2_start < 0:
-                win2_start = 0
-            win2_end = peaks[i+1]+WINDOW_LEN//2
-            if win2_end > len(comp_audio):
-                win2_end = len(comp_audio)
-            win2 = comp_audio[win2_start:win2_end]
-
-            shift_amt = self.corr_wins(win1, win2)
-            shifted_peaks[i+1] -= shift_amt
-
-
-        onset_times = peaks / self.fs
         diffs = np.diff(onset_times)
+
         print(np.sum((diffs>.3).astype(int)))
 
         audio_dur = len(audio) / self.fs
@@ -186,8 +179,83 @@ class WatchCalibration:
         print_drift_over_time(drift_per_sec, SEC_IN_YEAR, "year (365 days)")
 
 
+    def calculate_envelope(self, x):
+        # b, a = sps.butter(8, 5000, btype="lowpass", fs = self.fs)
+        # peaks at 530, 1200, and 7080
+        b, a = sps.butter(4, (300, 800), btype="bandpass", fs = self.fs)
+        f1 = sps.filtfilt(b, a, x)
+        b, a = sps.butter(4, (1100, 1200), btype="bandpass", fs = self.fs)
+        f2 = sps.filtfilt(b, a, x)
+        b, a = sps.butter(8, (6500, 7700), btype="bandpass", fs = self.fs)
+        f3 = sps.filtfilt(b, a, x)
+        filtered = f1 + f2 + f3
+        z_env, z_res = sps.envelope(filtered)#, bp_in=(1,20000), residual="all")
+        return filtered, z_env
+
+    def view_correlations(self, audio=None, hilbert=False, envelope=False):
+        if audio is None:
+            audio, _ = self.load_audio()
+
+        peaks, onset_times = self.find_peaks(audio)
+
+        filtered, env = self.calculate_envelope(audio)
+
+        shifted_peaks = copy.copy(peaks)
+        env_shifted_peaks = copy.copy(peaks)
+        for i in range(len(peaks)-1):
+            win1_start = peaks[i]-self.window_len//2
+            if win1_start < 0:
+                win1_start = 0
+            win1_end = peaks[i]+self.window_len//2 + 1
+            if win1_end > len(audio):
+                win1_end = len(audio)
+            win1 = audio[win1_start:win1_end]
+
+            win2_start = peaks[i+1]-self.window_len//2
+            if win2_start < 0:
+                win2_start = 0
+            win2_end = peaks[i+1]+self.window_len//2
+            if win2_end > len(audio):
+                win2_end = len(audio)
+            win2 = audio[win2_start:win2_end]
+
+            h1 = sps.hilbert(win1)
+            h2 = sps.hilbert(win2)
+
+            env1 = env[win1_start:win1_end]
+            env2 = env[win2_start:win2_end]
+
+            shift_amt = self.corr_wins(win1, win2)
+            shifted_peaks[i+1] -= shift_amt
+
+            env_shift_amt = self.corr_wins(env1, env2)
+            env_shifted_peaks[i+1] -= env_shift_amt
+
+        if hilbert:
+            pass
+
+        if envelope:
+            pass
+
+
+        num_fig_cols = 10
+        with plt.ioff():
+            fig, ax = plt.subplots(len(peaks)//num_fig_cols+1, num_fig_cols, squeeze=False)
+            fig.set_figheight(15)
+            fig.set_figwidth(15)
+            for i, peak in enumerate(peaks):
+                win_start = peak-WINDOW_LEN//2
+                win_end = peak+WINDOW_LEN//2
+                ax[i//10][i%10].plot(audio[win_start:win_end])
+                ax[i//10][i%10].plot(peak-win_start, audio[peak], "x")
+                ax[i//10][i%10].plot(
+                    shifted_peaks[i]-win_start, audio[shifted_peaks[i]], "x"
+                )
+                # ax[i//10][i%10].vlines(peaks[np.where((peaks >= win_start) & (peaks <= win_end))[0]] - win_start, sig_min, sig_max, color='r', alpha=0.8)
+            plt.show()
+
+
     def generate_figures(self, audio=None):
-        # load data from store
         if audio is None:
             audio, _ = self.load_audio()
 
